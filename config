@@ -1,0 +1,23 @@
+delta, 0.2
+totalSnps,522000
+numCores,0
+minEta,1e-140
+maxEta,1e-1
+maxIters,1e4
+numVzEigenValsToKeep,194
+numHermite,2e2
+numLam,    2e5 
+mcReps ,5e5
+folder,ellTest
+globalPvalThresh,8.06e-6
+FDR,0.05
+clusterDistance,0.4
+compute,False
+monteCarlo,False
+monteCarloCombine,False
+score,False
+associatedTraits,False
+cluster,False
+plotEllPvals,False
+plotEllStats,False
+plotOverlap,True

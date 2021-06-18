@@ -3,7 +3,7 @@ matplotlib.use('agg')
 import matplotlib.pyplot as plt
 
 import pandas as pd
-from multiprocessing import shared_memory
+from multiprocessing import shared_memory, cpu_count
 from socket import gethostname
 import numpy as np
 import pdb
@@ -88,8 +88,8 @@ def monteCarlo(parms):
     b_L[0][:]=L
     
     D=L.shape[1]
-    
     xargs=[]
+
     with ProcessPoolExecutor(numCores) as executor:
         for core in range(numCores):
             xargs+=[(LNm,int(np.ceil(mcReps/numCores)),startPrecomputeRowPerD,endPrecomputeRowPerD,precomputeNm,D,parms,core)]
@@ -112,19 +112,15 @@ def monteCarloCombine(parms):
     files=os.listdir('intermediate/ellRef')
     for file in files:  
         ell+=[np.loadtxt('intermediate/ellRef/'+file,delimiter=',').reshape(-1,1)]
-
     ell=np.sort(np.concatenate(ell,axis=0))
     np.savetxt('intermediate/ellMC',ell,delimiter=',')
-    subprocess.call('rm intermediate/ellRef/*',shell=True)
 
     naive=[]
     files=os.listdir('intermediate/naiveRef')
     for file in files:  
         naive+=[np.loadtxt('intermediate/naiveRef/'+file,delimiter=',').reshape(-1,1)]
-
     naive=np.sort(np.concatenate(naive,axis=0))
     np.savetxt('intermediate/naiveMC',naive,delimiter=',')
-    subprocess.call('rm /intermediate/naiveRef/*',shell=True)
 
     print('finished monteCarloCombined',flush=True)
     
@@ -139,7 +135,7 @@ def score(parms):
     globalPvalThresh=parms['globalPvalThresh']
     numCores=parms['numCores']
 
-    Z=np.loadtxt('input/Z')
+    Z=np.loadtxt('input/Z',delimiter=',')
     
     precomputeDF=np.loadtxt('intermediate/precompute',delimiter=',',dtype=[('lam','float64'),('eta','float64')])
     b_precompute,precomputeNm=bufCreate(precomputeDF.shape[0],dtype=[('lam','float64'),('eta','float64')])
@@ -154,7 +150,7 @@ def score(parms):
     snpLabels=np.loadtxt('input/snpLabels',delimiter=',',dtype='object')
 
     D=Z.shape[1]
-    calD=int(np.ceil(parms['calD']*D))
+    calD=int(np.ceil(parms['delta']*D))
 
     xargs=[]
     with ProcessPoolExecutor(numCores) as executor:
@@ -168,14 +164,16 @@ def score(parms):
     ellStats=bufClose(ellNm)
     naiveStats=bufClose(naiveNm)
     
-    ellMC=np.loadtxt('intermediate/ellMC',delimiter=',')
-    naiveMC=np.loadtxt('intermediate/naiveMC',delimiter=',')
+    ellMC=np.sort(np.loadtxt('intermediate/ellMC',delimiter=','))
+    naiveMC=np.sort(np.loadtxt('intermediate/naiveMC',delimiter=','))
 
-    ellPvals=np.searchsorted(ellMC,b_ell[0],side='left')+1
-    naivePvals=np.searchsorted(naiveMC,b_naive[0],side='left')+1
+    sortOrd=np.argsort(ellStats)
+    ellPvals=ellStats.copy()
+    ellPvals[sortOrd]=(np.searchsorted(ellMC,ellStats[sortOrd],side='left')+1)/(len(ellMC)+1)
 
-    ellPvals=ellPvals/(len(ellMC)+1)
-    naivePvals=naivePvals/(len(naiveMC)+1)
+    sortOrd=np.argsort(naiveStats)
+    naivePvals=naiveStats.copy()
+    naivePvals[sortOrd]=(np.searchsorted(naiveMC,naiveStats[sortOrd],side='left')+1)/(len(naiveMC)+1)
 
     scoreDF=pd.DataFrame({'snpLabels':snpLabels,'ellStats':ellStats,'ellPvals':ellPvals,'naiveStats':naiveStats,'naivePvals':naivePvals})
     scoreDF.to_csv('output/score',index=False)
@@ -198,7 +196,7 @@ def associatedTraits(parms):
     snpLabels=np.loadtxt('input/snpLabels',delimiter=',',dtype='object')
 
     D=len(traitLabels)
-    calD=int(np.ceil(parms['calD']*D))
+    calD=int(np.ceil(parms['delta']*D))
 
     score=pd.read_csv('output/score',index_col=None,header=0,dtype={'snpLabels':'object','ellStats':float,
         'ellPvals':float,'naiveStats':float,'naivePvals':float})[['snpLabels','ellStats','ellPvals','naiveStats','naivePvals']]    
@@ -238,6 +236,7 @@ def eqtlDistance(parms):
     score=score[score['numAssociatedTraits']>0]
                                                                                               
     numEQTL=len(score)
+
     b_distance,distanceNm=bufCreate([numEQTL,numEQTL])
 
     eqtlPairs=np.concatenate([x.reshape(-1,1) for x in np.triu_indices(numEQTL,1)],axis=1)
@@ -406,14 +405,15 @@ def plotOverlap(parms):
     hspace=0.14
     wspace=0.11
 
-    clusterOverlapMatrix=np.loadtxt('output/clusterOverlapMatrix')
+    clusterOverlapMatrix=np.loadtxt('output/clusterOverlapMatrix',delimiter=',')
     scoreDF=pd.read_csv('output/score',index_col=None,header=0)
-    ID=scoreDF['snpLabels'].values.flatten()
+
+    ID=scoreDF['snpLabels'].values.flatten().tolist()
     
     scoreDF=scoreDF[scoreDF['numAssociatedTraits']>0]
 
     try:
-        ID=[float(x) for x in ID]
+        ID=np.array([float(x) for x in ID])
     except:
         print('Non float snp labels so using snp index',flush=True)
         ID=np.arange(len(ID))
@@ -460,7 +460,7 @@ def plotOverlap(parms):
 ##################################################################################################################33
 
 def minMaxLamPerD(hermiteDiag,D,parms): 
-    calD=int(np.ceil(parms['calD']*D))
+    calD=int(np.ceil(parms['delta']*D))
     minEta=parms['minEta']
     maxEta=parms['maxEta']
     numLam=parms['numLam']
@@ -538,7 +538,7 @@ def minMaxDPerBin(minLamPerD,maxLamPerD,lam):
 
 def makePrecompute(hermiteDiag,lam,minBinPerD,maxBinPerD,minDPerBin,maxDPerBin,D,parms):
     numCores=parms['numCores']
-    calD=int(np.ceil(parms['calD']*D))
+    calD=int(np.ceil(parms['delta']*D))
     
     precomputeLen=(maxBinPerD-minBinPerD+1)
 
@@ -719,20 +719,16 @@ def monteCarloHelp(args):
 
     b_L=bufLoad(LNm)   
 
-    for rep in range(mcReps):
-        ellNm='intermediate/ellRef/{}-{}-{}'.format(gethostname(),rep,core)
-        naiveNm='intermediate/naiveRef/{}-{}-{}'.format(gethostname(),rep,core)
+    ellNm='intermediate/ellRef/{}-{}-{}'.format(gethostname(),core,time.time())
+    naiveNm='intermediate/naiveRef/{}-{}-{}'.format(gethostname(),core,time.time())
 
-        Z=norm.rvs(size=[mcRepsPerBlock,b_L[0].shape[1]])@b_L[0].T
+    Z=norm.rvs(size=[mcReps,b_L[0].shape[1]])@b_L[0].T
 
-        ellStats,naiveStats=getStatistics((Z,startPrecomputeRowPerD,endPrecomputeRowPerD,precomputeNm,D,parms))
+    ellStats,naiveStats=getStatistics((Z,startPrecomputeRowPerD,endPrecomputeRowPerD,precomputeNm,D,parms))
 
-        np.savetxt(ellNm,np.sort(ellStats))
-        np.savetxt(naiveNm,np.sort(naiveStats))
-
-        if rep%20==0:
-            print(' rep {} of {}, host {}, core {}'.format(rep+1,mcReps,gethostname(),core),flush=True)
-    
+    np.savetxt(ellNm,np.sort(ellStats))
+    np.savetxt(naiveNm,np.sort(naiveStats))
+    print(core)
     b_L[1].close()
     
     return()
@@ -780,7 +776,7 @@ def getStatistics(args):
     minEta=parms['minEta']
     maxEta=parms['maxEta']
     numCores=parms['numCores']
-    calD=int(np.ceil(parms['calD']*D))
+    calD=int(np.ceil(parms['delta']*D))
 
     Reps,_=Z.shape
 
@@ -860,7 +856,7 @@ def bufClose(nm):
 
 def main(parms):
     parms['numCores']=int(float(parms['numCores']))
-    parms['calD']=float(parms['calD'])
+    parms['delta']=float(parms['delta'])
     parms['minEta']=float(parms['minEta'])
     parms['maxEta']=float(parms['maxEta'])
     parms['maxIters']=int(float(parms['maxIters']))
@@ -869,14 +865,21 @@ def main(parms):
     parms['numLam']=int(float(parms['numLam']))
     parms['mcReps']=int(float(parms['mcReps']))
     parms['globalPvalThresh']=float(parms['globalPvalThresh'])
-    parms['numCandidates']=int(float(parms['numCandidates']))
     parms['totalSnps']=int(float(parms['totalSnps']))
     parms['FDR']=float(parms['FDR'])
     parms['clusterDistance']=float(parms['clusterDistance'])
+    
+    parms['numCores']=cpu_count() if parms['numCores']==0 else parms['numCores']
 
     os.chdir(parms['folder'])
     subprocess.call(['mkdir','-p','intermediate','intermediate/ellRef','intermediate/naiveRef','output'])
     
+    Z = open('input/Z', "r")
+    line = Z.readline().split(',')
+    Z.close()
+
+    parms['numCandidates']=len(line)
+
     if parms['compute']=='True':
         compute(parms)
     
@@ -892,10 +895,8 @@ def main(parms):
     if parms['associatedTraits']=='True':
         associatedTraits(parms)
         
-    if parms['eqtlDistance']=='True':
-        eqtlDistance(parms)
-        
     if parms['cluster']=='True':
+        eqtlDistance(parms)
         cluster(parms)
         
     if parms['plotEllPvals']=='True':
@@ -910,5 +911,9 @@ def main(parms):
     return()
 
 
-config=pd.read_csv(sys.argv[1],index_col=0,header=None).iloc[:,0].to_dict()
+configFile = open(sys.argv[1], "r")
+myList = configFile.readlines()
+configFile.close()
+config={x[0]:x[1] for x in [x.replace('\n','').replace(' ','').replace('\t','').split(',') for x in myList]}
+
 main(config)
